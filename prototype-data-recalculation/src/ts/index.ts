@@ -184,38 +184,7 @@ export async function handler(
     else {
       return new HttpReturn(500, "Retry").toJson();
     }
-    /* responseBody = await getQueryResponse(`query MyQuery {
-      getAdvisorSplit(id: "${objectInput["repOnTradeID"]}") {
-        repRateOne
-        repRateTwo
-        repRateThree
-        individualRepOneID
-        individualRepTwoID
-        individualRepThreeID
-  }
-}
 
-`);
-    console.log("Split: ", responseBody);
-    if (responseBody["data"]["getAdvisorSplit"] == null) {
-      await sendErrorLogMessage(client, event["fileName"], `Advisor With ID ${objectInput["repOnTradeID"]} Does Not Exist`);
-      return new HttpReturn(200, "Request is complete").toJson();
-    }
-
-    //Recalculate rates
-    if (objectInput["paidRepID"] == responseBody["data"]["getAdvisorSplit"]["individualRepOneID"]) {
-      console.log("Match One: ", objectInput["paidRepID"]);
-      objectInput["basis"] = objectInput["basis"] * responseBody["data"]["getAdvisorSplit"]["repRateOne"];
-    }
-    else if (objectInput["paidRepID"] == responseBody["data"]["getAdvisorSplit"]["individualRepTwoID"]) {
-      console.log("Match Two: ", objectInput["paidRepID"]);
-      objectInput["basis"] = objectInput["basis"] * responseBody["data"]["getAdvisorSplit"]["repRateTwo"];
-    }
-    else {
-      if (objectInput["paidRepID"] == responseBody["data"]["getAdvisorSplit"]["individualRepThreeID"]) {
-        objectInput["basis"] = objectInput["basis"] * responseBody["data"]["getAdvisorSplit"]["repRateThree"];
-      }
-    } */
   }
   //Firstly, get initial payout rate from grid and save for later calculation
   responseBody = await getQueryResponse(`query _ {
