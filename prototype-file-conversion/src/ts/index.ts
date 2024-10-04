@@ -72,8 +72,6 @@ export async function handler(
     event["event"]["requestContext"]["path"] = "/main/powerpoint";
     event["event"]["requestContext"]["resourcePath"] = "/powerpoint";
     event["event"]["headers"]["x-api-key"] = event["accessInfo"]["Value"]["userId"];
-    console.log("Event");
-    console.log("Incoming Event: ", JSON.stringify(event["event"]));
     let lambdaRequests: number = 0;
     while (lambdaRequests < 50) {
         try {
@@ -84,7 +82,6 @@ export async function handler(
             };
             const command = new InvokeCommand(input);
             const response = await client.send(command);
-            console.log("Response: ", response);
             break;
         }
         catch (e) {
@@ -95,9 +92,6 @@ export async function handler(
     }
     await new Promise(f => setTimeout(f, 35000));
     event["event"]["body"] = JSON.stringify({ "fileName": powerPointFileName });
-
-
-    console.log("New Event: ", event);
 
     lambdaRequests = 0;
     while (lambdaRequests < 50) {
@@ -135,10 +129,8 @@ export async function handler(
                 "Key": `${environmentVariable}/users/${event["accessInfo"]["Value"]["userId"]}/files/storage/${displayFileName}`
             };
 
-            console.log("File Copying command: ", fileCopyInput);
             const fileCopyCommand = new CopyObjectCommand(fileCopyInput);
             const fileCopyResponse = await fileClient.send(fileCopyCommand);
-            console.log("Response File Move: ", fileCopyResponse);
             break;
         }
         catch (e) {
