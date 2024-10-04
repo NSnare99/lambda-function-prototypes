@@ -1,3 +1,22 @@
+/**
+ * @file prototype-report-engine/src/ts/index.ts
+ * @description This file contains the RMS and Advisory Operations report engine. It interfaces with the 
+ * report state machine to allow the processing of arbitrary amounts of data and a given time span. 
+ * First, the report engine queries the proper databases, handles errors in queries, and determines which
+ * report steps must be taken. Then, it sends a segment of the data to be stored in S3 in JSON format. 
+ * Finally, it repeats the process until the given query parameters return no new data, passing the finished
+ * JSON file to the next step in the state machine process.
+ *
+ * @method validateInput(inputDataRevenueSources: any, existingData: any, adjustmentData: any, reportName: string, event: any, isFinalSummary: boolean): Promise<any>: 
+ * @description Takes the queried data, report options, and boolean isFinalSummary to determine the next step in the report process. It combines any past segments of the report file
+ * with the new data, and then posts the updated report to S3. 
+ *
+ * @method sortByProperty<T>(arr: T[], prop: keyof T,): T[] 
+ * @description Sort report data by a given parameter (date, client ID, etc. 
+ */
+
+
+
 //@ts-ignore
 import { S3Client, GetObjectCommand, PutObjectCommand, PutObjectTaggingCommand } from "@aws-sdk/client-s3";
 import {
@@ -69,7 +88,6 @@ export async function handler(
         queryLimit = "50";
     }
 
-
     if (event["orgID"] == 3) {
         orgFilterCommission = `not: {repName: {matchPhrase: "PFG Risk Mgmt"}},`;
         orgFilterAdjustment = `not: {repID: {contains: "-LI"}},`;
@@ -80,14 +98,10 @@ export async function handler(
         orgFilterAdjustment = `repID: {contains: "-LI"},`;
     }
 
-
-
     if (event["startDate"] == "" && event["endDate"] == "") {
         isCalculatingOpenPeriod = true;
         commissionTableSelection = "searchPendingCommissions";
         adjustmentTableSelection = "listPendingAdjustments";
-
-
     }
     else {
         commissionTableSelection = "searchCommissions";
@@ -102,8 +116,6 @@ export async function handler(
         if (event["repId"] != "") {
             repId = `repID: {eq: "${event["repId"]}"},`
         }
-
-
 
         query = `
         query MyQuery {
@@ -122,22 +134,10 @@ export async function handler(
               }
             
             }
-          }
-          
-        `;
-
-
-
-
-
-
-
+          }`;
 
         let continueList: boolean = true;
         while (continueList) {
-
-
-
             const optionsAdjustments = {
                 method: 'POST',
                 headers: {
@@ -146,10 +146,6 @@ export async function handler(
                 },
                 body: JSON.stringify({ query })
             };
-
-
-
-
 
             const graphQLQueryRequestAdjustments = new Request(GRAPHQL_ENDPOINT as any, optionsAdjustments as any);
 
@@ -204,16 +200,7 @@ export async function handler(
                   `;
 
             }
-
-
-
-
-
-
         }
-
-
-
 
         const inputPutObjectTaggingOriginalFile = {
             "Bucket": "nuworks-production",
@@ -229,8 +216,6 @@ export async function handler(
         };
         const putObjectTaggingCommandOriginalFile = new PutObjectTaggingCommand(inputPutObjectTaggingOriginalFile);
         await fileClient.send(putObjectTaggingCommandOriginalFile);
-
-
 
         let finishedFileName: string = event["fileName"].replace(".JSON", "_adjustments.JSON");
         if (event["reportName"] == "adjustmentList") {
@@ -248,13 +233,7 @@ export async function handler(
 
         previousSummary = await validateInput(adjustmentsList, "", "", "adjustmentList", event, isCalculatingOpenPeriod);
 
-
         previousSummary = JSON.parse(previousSummary);
-
-
-
-
-
 
         const inputPutObjectNewFile = {
             "Body": JSON.stringify(previousSummary),
@@ -281,14 +260,8 @@ export async function handler(
         const putObjectTaggingCommandNewFile = new PutObjectTaggingCommand(inputPutObjectTaggingNewFile);
         await fileClient.send(putObjectTaggingCommandNewFile);
         return { "fileName": event["fileName"], "startDate": event["startDate"], "endDate": event["endDate"], "reportName": event["reportName"], "repId": event["repId"], "orgID": event["orgID"], "nextToken": "" };
-
-
     }
-
     else {
-
-
-
         let getObjectInput: any = {
             "Bucket": "nuworks-production",
             "Key": event["fileName"],
@@ -297,21 +270,8 @@ export async function handler(
         let getObjectCommand: any = new GetObjectCommand(getObjectInput);
         let getObjectResponse: any = await fileClient.send(getObjectCommand);
         let content: any = await streamToString(getObjectResponse.Body);
-
-
-
-
-
-
-
         //Return file contents to JSON format
         const ReportSummaryFromS3 = JSON.parse(content as string);
-
-
-
-
-
-
         getObjectInput = {
             "Bucket": "nuworks-production",
             "Key": event["fileName"].replace(".JSON", "_adjustments.JSON"),
@@ -320,25 +280,13 @@ export async function handler(
             new GetObjectCommand(getObjectInput);
         getObjectResponse = await fileClient.send(getObjectCommand);
         content = await streamToString(getObjectResponse.Body);
-
         const AdjustmentsSummaryFromS3 = JSON.parse(content as string);
-
-
-
-
         if (event["repId"] != "") {
             repId = `paidRepID: {eq: "${event["repId"]}"},`
         }
-
-
         //Check if State Machine has passed a nextToken from prior step
         if (event["nextToken"] != "") {
-
-
-
-
             query =
-
                 `
      query MyQuery {
          ${commissionTableSelection}(limit: ${queryLimit}, filter: {_deleted: {ne: true}, ${commPeriodFilterCommissions} ${repId} ${orgFilterCommission}}, nextToken: "${event["nextToken"]}") {
@@ -365,15 +313,9 @@ export async function handler(
        }
        
      `;
-
-
-
         }
         //if not, get the nextToken in request
         else {
-
-            console.log("Next Token Does not Exist");
-
             query = `
      query MyQuery {
          ${commissionTableSelection}(limit: ${queryLimit}, filter: {_deleted: {ne: true}, ${commPeriodFilterCommissions} ${repId} ${orgFilterCommission}}) {
@@ -400,13 +342,7 @@ export async function handler(
        }
        
      `;
-
-
         }
-
-
-
-
         const options = {
             method: 'POST',
             headers: {
@@ -416,13 +352,7 @@ export async function handler(
             body: JSON.stringify({ query })
         };
 
-
-
-
-
         const graphQLQueryRequest = new Request(GRAPHQL_ENDPOINT as any, options as any);
-
-
 
         try {
             response = await fetch(graphQLQueryRequest,);
@@ -452,21 +382,12 @@ export async function handler(
         let finalSummary: any;
         //Pass along file name if no more data to retrieve
         if (graphQLResponseBodyCommissions["data"][commissionTableSelection]["items"] == null || graphQLResponseBodyCommissions["data"][commissionTableSelection]["items"].length == 0) {
-
-            console.log("Final run of Report");
-
-            /* 
-                        await CommissionPayableSummaryFinalProcessing(ReportSummaryFromS3); */
-
             if (event["reportName"] == "commissionPayableSummary" && isCalculatingOpenPeriod) {
                 finalSummary = await validateInput([], previousSummary, [], event["reportName"], event, true);
             }
             else {
                 finalSummary = JSON.stringify(previousSummary);
             }
-            console.log("Previous Summary: ", previousSummary);
-            console.log("Final Summary: ", finalSummary);
-            console.log("Event: ", event);
 
             const inputPutObjectTaggingOriginalFile = {
                 "Bucket": "nuworks-production",
@@ -531,19 +452,9 @@ export async function handler(
         }
     }
 
-
-
-
 };
 
-
-
-
 async function validateInput(inputDataRevenueSources: any, existingData: any, adjustmentData: any, reportName: string, event: any, isFinalSummary: boolean): Promise<any> {
-
-
-
-
     switch (reportName) {
         case "feeCommissionStatement":
             if (event["repId"] == "") {
