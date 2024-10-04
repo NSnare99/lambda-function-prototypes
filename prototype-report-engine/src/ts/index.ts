@@ -12,7 +12,7 @@
  * with the new data, and then posts the updated report to S3. 
  *
  * @method sortByProperty<T>(arr: T[], prop: keyof T,): T[] 
- * @description Sort report data by a given parameter (date, client ID, etc. 
+ * @description Sort report data by a given parameter (date, client ID, etc). 
  */
 
 
