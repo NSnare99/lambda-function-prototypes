@@ -1,4 +1,22 @@
-
+/**
+ * @file prototype-data-processor/src/ts/index.ts
+ * @description This file contains the data-processor class, which allows clients to upload partial 
+ * revenue data and receive a completed version from queries. It handles incomplete or invalid uploads 
+ * and returns any errors to client for review.
+ *
+ * @method getCurrentDateFormatted(): 
+ * @description Retrieve current date and format in valid AWSDate style
+ *
+ * @method getSplitLineItems(objectInput: any): Promise<any[]>
+ * @description Retrieve information on business split between advisors, including individual advisor info
+ * and payout percentages.
+ *
+ * @method getAdvisorPayoutGrids(repId: string): Promise<any>
+ * @description Retrieve payout information for an individual advisor to calculate net revenue.
+ *
+ * @method sendErrorLogMessage(client: any, logName: string, message: string): Promise<any>
+ * @description Send detailed error log info to client for review and correction 
+ */
 
 import {
   APIGatewayProxyEvent,
@@ -18,22 +36,17 @@ export async function handler(
 
 
 ): Promise<any> {
-
+  
+  // Create a new instance of the CloudWatchLogsClient
+  // to allow creation and interaction with Amazon CloudWatch Logs.
   const client = new CloudWatchLogsClient();
-  //Check whether the event is from client side HTTP request 
-  //Or whether Lambda has been triggered by state machine execution
   let objectInput: any;
   let returnData: any[] = [];
   let responseBody: any;
-
-
-
-
-
+  // Each invocation of this Lambda function is performed simultaneously by the data processing 
+  // state machine. event["lineItem"] is a single row of uploaded commission/revenue data.  
   objectInput = event["lineItem"];
-
-
-
+  // Perform GraphQL query to determine if financial advisor has been terminated
   responseBody = await getQueryResponse(`query MyQuery {
     getAdvisor(id: "${objectInput["repOnTradeID"]}") {
       status
@@ -42,22 +55,26 @@ export async function handler(
   
   `, "getAdvisor");
 
+  // Perform queries based on uploaded codes and IDs. Send any errors to client side with descriptive message.
   if (responseBody["data"]["getAdvisor"] != null && responseBody["data"]["getAdvisor"]["status"] == "Terminated") {
     await sendErrorLogMessage(client, event["fileName"], `Advisor with ID ${objectInput["repOnTradeID"]} Is Terminated`);
-    return new HttpReturn(200, "Request is complete").toJson();
+    return new HttpReturn(400, "Request cannot be completed; non-existent or terminated advisor.").toJson();
   }
 
-
+  //Get current date in proper format for date fields.
   objectInput["bDPaidDate"] = getCurrentDateFormatted();
   objectInput["enteredDate"] = getCurrentDateFormatted();
   objectInput["tradeType"] = "Advisory Fees";
-  console.log("Item", objectInput);
+
+  //Determine type of business based on attributes.
   if (objectInput["repOnTradeID"].includes("-LI")) {
     objectInput["businessType"] = "Insurance";
   }
   else {
     objectInput["businessType"] = "All";
   }
+
+  //Query details
   objectInput["symbol"] = objectInput["product"];
   responseBody = await getQueryResponse(`query MyQuery {
             getProduct(id: "${objectInput["product"]}") {
@@ -70,13 +87,12 @@ export async function handler(
 
   if (responseBody["data"]["getProduct"] == null) {
     await sendErrorLogMessage(client, event["fileName"], `Product with ID ${objectInput["product"]} Does Not Exist`);
-    return new HttpReturn(200, "Request is complete").toJson();
+    return new HttpReturn(400, "Request cannot be complete; Product with ID ${objectInput["product"]} Does Not Exist").toJson();
   }
 
   objectInput["programCategoryCode"] = responseBody["data"]["getProduct"]["productCategoryID"];
   objectInput["vendorID"] = responseBody["data"]["getProduct"]["vendorID"];
   objectInput["product"] = responseBody["data"]["getProduct"]["productName"];
-
 
   responseBody = await getQueryResponse(`query MyQuery {
                 getProductCategory(id: "${objectInput["programCategoryCode"]}") {
@@ -85,20 +101,26 @@ export async function handler(
               }
               `, "getProductCategory");
 
-
+    if (responseBody["data"]["getProductCategory"] == null) {
+    await sendErrorLogMessage(client, event["fileName"], `Category with code ${objectInput["programCategoryCode"]} Does Not Exist`);
+    return new HttpReturn(400, "Request cannot be complete; Category with code ${objectInput["programCategoryCode"]} Does Not Exist").toJson();
+  }
 
   objectInput["productCategoryName"] = responseBody["data"]["getProductCategory"]["name"];
 
-  // Seemingly new issue where vendorID from getProduct has comma within UUID string
-  // (i.e. "aaa-bbb-ccc,"). 
-  // --Noah          
+       
   responseBody = await getQueryResponse(`query MyQuery {
-                getVendor(id: "${objectInput["vendorID"].replaceAll(",", "")}") {
+                getVendor(id: "${objectInput["vendorID"]}") {
                   name
                 }
               }
               `, "getVendor");
-
+  
+  if (responseBody["data"]["getVendor"] == null) {
+    await sendErrorLogMessage(client, event["fileName"], `Vendor with code ${objectInput["vendorID"]} Does Not Exist`);
+    return new HttpReturn(400, "Request cannot be complete; Vendor with code ${objectInput["vendorID"]} Does Not Exist").toJson();
+  }
+  
   objectInput["vendorName"] = responseBody["data"]["getVendor"]["name"];
 
 
@@ -113,19 +135,19 @@ export async function handler(
       }
     }`, "searchAccounts");
 
-
-
-
-
+  if (responseBody["data"]["getVendor"] == null) {
+    await sendErrorLogMessage(client, event["fileName"], `Account with ID ${objectInput["externalAccount"]} Does Not Exist`);
+    return new HttpReturn(400, "Account with ID ${objectInput["externalAccount"]} Does Not Exist").toJson();
+  }
 
   if (responseBody["data"]["searchAccounts"]["items"].length >= 1) {
     if (objectInput["repOnTradeID"] != responseBody["data"]["searchAccounts"]["items"][0]["repID"]) {
       await sendErrorLogMessage(client, event["fileName"], `Advisor with ID ${objectInput["repOnTradeID"]} Does Not Match Advisor ID ${responseBody["data"]["searchAccounts"]["items"][0]["repID"]} on Account with Number ${objectInput["externalAccount"]}`);
-      return new HttpReturn(200, "Request is complete").toJson();
+      return new HttpReturn(400, "Advisor with ID ${objectInput["repOnTradeID"]} Does Not Match Advisor ID ${responseBody["data"]["searchAccounts"]["items"][0]["repID"]} on Account with Number ${objectInput["externalAccount"]}").toJson();
     }
     if (responseBody["data"]["searchAccounts"]["items"][0]["clientStatus"] == "Closed") {
       await sendErrorLogMessage(client, event["fileName"], `Account with Number ${objectInput["externalAccount"]} has Status "Closed"`);
-      return new HttpReturn(200, "Request is complete").toJson();
+      return new HttpReturn(400, "Account with Number ${objectInput["externalAccount"]} has Status "Closed"").toJson();
     }
     objectInput["clientID"] = responseBody["data"]["searchAccounts"]["items"][0]["clientID"];
     objectInput["clientName"] = responseBody["data"]["searchAccounts"]["items"][0]["displayName1"];
@@ -133,40 +155,30 @@ export async function handler(
     objectInput["sortName"] = `${names[names.length - 1].toLocaleUpperCase()}${names[0].charAt(0).toLocaleUpperCase()}`;
   }
 
-
-
-
-
-
-
   const splits = await getSplitLineItems(objectInput);
-
-  console.log("Got splits: ", splits);
 
   if (splits.length > 0) {
     const splitsCopy = splits;
     for (let splitsIndex = 0; splitsIndex < splitsCopy.length; splitsIndex++) {
-
-      responseBody = await getQueryResponse(` 
-              
-                      query MyQuery { listAdvisorOverrides(limit: 1000, filter: { and: [
+      responseBody = await getQueryResponse(`query MyQuery 
+      { listAdvisorOverrides(limit: 1000, filter: { and: [
         { repOnTradeID: { eq: "${splitsCopy[splitsIndex]["paidRepID"]}" } },
-        {
-          or: [
-            { applicableProductCategoryID: { eq: "${objectInput["programCategoryCode"]}" } },
-            { applicableToAllBusiness: { eq: true } }
-          ]
-        }
+         {
+           or: [
+             { applicableProductCategoryID: { eq: "${objectInput["programCategoryCode"]}" } },
+             { applicableToAllBusiness: { eq: true } }
+           ]
+         }
       ]}) {
-                              items {
-                                  rate
-                                      paidRep {
-                                          id
-                                          firstName
-                                      }
-                                  }
-                              }
-                          }
+            items {
+                rate
+                    paidRep {
+                      id
+                      firstName
+                             }
+                           }
+                         }
+                        }
                       `, "listAdvisorOverrides");
       if (responseBody["data"]["listAdvisorOverrides"] != null) {
         let commissionRateSplit = splits[splitsIndex]["commissionRate"];
@@ -181,13 +193,10 @@ export async function handler(
         }
         returnData.push({ "repOnTradeID": splits[splitsIndex]["repOnTradeID"], "paidRepID": splits[splitsIndex]["paidRepID"], "externalAccount": objectInput["externalAccount"], "principal": objectInput["principal"], "basis": splits[splitsIndex]["basis"], "commissionGross": splits[splitsIndex]["basis"], "commissionNet": commissionRateSplit * splits[splitsIndex]["basis"] * .01, "commissionRate": commissionRateSplit, "settleDate": objectInput["settleDate"], "tradeDate": objectInput["tradeDate"], "product": objectInput["product"], "placedThrough": objectInput["vendorName"], "repName": objectInput["repName"], "clientID": objectInput["clientID"], "clientAlternateID": objectInput["externalAccount"], "clientName": objectInput["clientName"], "commissionType": "Trades", "productType": objectInput["productCategoryName"], "vendor": objectInput["vendorName"], "grid": objectInput["productCategoryName"], "businessType": objectInput["businessType"], "fee": 0, "bDPaidDate": objectInput["bDPaidDate"], "sortName": objectInput["sortName"], "symbol": objectInput["symbol"], "enteredDate": objectInput["enteredDate"], "daysInBillingCycle": objectInput["daysInBillingCycle"] });
       }
-
     }
-
-
   }
+    
   else {
-
     responseBody = await getQueryResponse(`query _ {
       searchPayoutGrids(limit: 1000, filter: {advisorID: {eq: "${objectInput["repOnTradeID"]}"}, productCategoryID: {eq: "${objectInput["programCategoryCode"]}"}}) {
         items {
@@ -200,60 +209,29 @@ export async function handler(
         }
       }`, "searchPayoutGrids");
 
-
-    console.log(`Query: query _ {
-      searchPayoutGrids(limit: 1000, filter: {advisorID: {eq: "${objectInput["repOnTradeID"]}"}, productCategoryID: {eq: "${objectInput["programCategoryCode"]}"}}) {
-        items {
-          rate
-          advisor {
-            firstName
-            lastName
-            }
-          }
-        }
-      }`);
-
-
-
-
-    console.log("error point ", responseBody);
-
-
     objectInput["repName"] = `${responseBody["data"]["searchPayoutGrids"]["items"][0]["advisor"]["firstName"]} ${responseBody["data"]["searchPayoutGrids"]["items"][0]["advisor"]["lastName"]}`;
-
-
-
-
-
     let commissionRate: number = responseBody["data"]["searchPayoutGrids"]["items"][0]["rate"];
-    console.log("Beginning Rate", commissionRate);
-
-
-    responseBody = await getQueryResponse(` 
-              
-                      query MyQuery { listAdvisorOverrides(limit: 1000, filter: { and: [
+    responseBody = await getQueryResponse(`query MyQuery 
+    { listAdvisorOverrides(limit: 1000, filter: { and: [
         { repOnTradeID: { eq: "${objectInput["repOnTradeID"]}" } },
-        {
-          or: [
+        {or: [
             { applicableProductCategoryID: { eq: "${objectInput["programCategoryCode"]}" } },
             { applicableToAllBusiness: { eq: true } }
           ]
         }
       ]}) {
-                              items {
-                                  rate
-                                      paidRep {
-                                          id
-                                          firstName
-                                      }
-                                  }
-                              }
+            items {
+                  rate
+                  paidRep {
+                    id
+                    firstName
                           }
+                        }
+                      }
+                    }
                       `, "listAdvisorOverrides");
+    
     if (responseBody["data"]["listAdvisorOverrides"] != null) {
-
-
-
       for (let overridesIndex = 0; overridesIndex < responseBody["data"]["listAdvisorOverrides"]["items"].length; overridesIndex++) {
         if (responseBody["data"]["listAdvisorOverrides"]["items"][overridesIndex]["paidRep"]["id"].includes("-LI")) {
           objectInput["repName"] = `${objectInput["repName"]} - PFG Risk Mgmt`;
@@ -266,9 +244,6 @@ export async function handler(
       returnData.push({ "repOnTradeID": objectInput["repOnTradeID"], "paidRepID": objectInput["repOnTradeID"], "externalAccount": objectInput["externalAccount"], "principal": objectInput["principal"], "basis": objectInput["basis"], "commissionGross": objectInput["basis"], "commissionNet": commissionRate * objectInput["basis"] * .01, "commissionRate": commissionRate, "settleDate": objectInput["settleDate"], "tradeDate": objectInput["tradeDate"], "product": objectInput["product"], "placedThrough": objectInput["vendorName"], "repName": objectInput["repName"], "clientID": objectInput["clientID"], "clientAlternateID": objectInput["externalAccount"], "clientName": objectInput["clientName"], "commissionType": "Trades", "productType": objectInput["productCategoryName"], "grid": objectInput["productCategoryName"], "vendor": objectInput["vendorName"], "businessType": objectInput["businessType"], "fee": 0, "bDPaidDate": objectInput["bDPaidDate"], "sortName": objectInput["sortName"], "symbol": objectInput["symbol"], "enteredDate": objectInput["enteredDate"], "daysInBillingCycle": objectInput["daysInBillingCycle"] });
     }
 
-
-
-
     else {
       if (objectInput["repOnTradeID"].includes("-LI")) {
         objectInput["repName"] = `${objectInput["repName"]} - PFG Risk Mgmt`;
@@ -279,6 +254,7 @@ export async function handler(
   }
   return returnData;
 }
+
 
 function getCurrentDateFormatted(): string {
   const currentDate: Date = new Date();
@@ -337,7 +313,6 @@ async function getSplitLineItems(objectInput: any): Promise<any[]> {
 
   for (let gridIndex = 0; gridIndex < firstPayoutGrids["data"]["searchPayoutGrids"]["items"].length; gridIndex++) {
     if (firstPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["productCategoryID"] == objectInput["programCategoryCode"]) {
-      console.log("Payout Grid 1: ", firstPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]);
       firstRate = firstPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["rate"];
       firstRepFullName = objectInput["repName"] = `${firstPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["advisor"]["firstName"]} ${firstPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["advisor"]["lastName"]}`;
     }
@@ -346,14 +321,11 @@ async function getSplitLineItems(objectInput: any): Promise<any[]> {
   let secondId = responseBody["data"]["getAdvisorSplit"]["individualRepTwo"]["id"];
   let secondBasis = objectInput["basis"] * responseBody["data"]["getAdvisorSplit"]["repRateTwo"] * .01;
   let secondPayoutGrids = await getAdvisorPayoutGrids(secondId);
-
-
   let secondRate: number = 0;
   let secondRepFullName: string = "";
 
   for (let gridIndex = 0; gridIndex < secondPayoutGrids["data"]["searchPayoutGrids"]["items"].length; gridIndex++) {
     if (secondPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["productCategoryID"] == objectInput["programCategoryCode"]) {
-      console.log("Payout Grid 2: ", secondPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]);
       secondRate = secondPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["rate"];
       secondRepFullName = `${secondPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["advisor"]["firstName"]} ${secondPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["advisor"]["lastName"]}`;
     }
@@ -371,55 +343,25 @@ async function getSplitLineItems(objectInput: any): Promise<any[]> {
     thirdPayoutGrids = await getAdvisorPayoutGrids(thirdId);
     for (let gridIndex = 0; gridIndex < thirdPayoutGrids["data"]["searchPayoutGrids"]["items"].length; gridIndex++) {
       if (thirdPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["productCategoryID"] == objectInput["programCategoryCode"]) {
-        console.log("Payout Grid 3: ", thirdPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]);
         thirdRate = thirdPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["rate"];
         thirdRepFullName = `${thirdPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["advisor"]["firstName"]} ${thirdPayoutGrids["data"]["searchPayoutGrids"]["items"][gridIndex]["advisor"]["lastName"]}`;
       }
     }
   }
-
-
-
-
-
-
-
   let firstItem = { "repOnTradeID": objectInput["repOnTradeID"], "paidRepID": firstId, "externalAccount": objectInput["externalAccount"], "principal": objectInput["principal"], "basis": firstBasis, "commissionGross": firstBasis, "commissionNet": firstRate * firstBasis * .01, "commissionRate": firstRate, "settleDate": objectInput["settleDate"], "tradeDate": objectInput["tradeDate"], "product": objectInput["product"], "placedThrough": objectInput["vendorName"], "repName": firstRepFullName, "clientID": objectInput["clientID"], "clientAlternativeID": objectInput["externalAccount"], "clientName": objectInput["clientName"], "commissionType": "Trades", "productType": objectInput["productCategoryName"], "vendor": objectInput["vendorName"], "grid": objectInput["productCategoryName"], "bDPaidDate": objectInput["bDPaidDate"], "businessType": objectInput["businessType"], "fee": 0, };
-
   let secondItem = { "repOnTradeID": objectInput["repOnTradeID"], "paidRepID": secondId, "externalAccount": objectInput["externalAccount"], "principal": objectInput["principal"], "basis": secondBasis, "commissionGross": secondBasis, "commissionNet": secondRate * secondBasis * .01, "commissionRate": secondRate, "settleDate": objectInput["settleDate"], "tradeDate": objectInput["tradeDate"], "product": objectInput["product"], "placedThrough": objectInput["vendorName"], "repName": secondRepFullName, "clientID": objectInput["clientID"], "clientAlternativeID": objectInput["externalAccount"], "clientName": objectInput["clientName"], "commissionType": "Trades", "productType": objectInput["productCategoryName"], "vendor": objectInput["vendorName"], "grid": objectInput["productCategoryName"], "bDPaidDate": objectInput["bDPaidDate"], "businessType": objectInput["businessType"], "fee": 0, };
-
   let thirdItem = {};
 
   if (responseBody["data"]["getAdvisorSplit"]["individualRepThree"] != null) {
     thirdItem = { "repOnTradeID": objectInput["repOnTradeID"], "paidRepID": thirdId, "externalAccount": objectInput["externalAccount"], "principal": objectInput["principal"], "basis": thirdBasis, "commissionGross": thirdBasis, "commissionNet": thirdRate * thirdBasis * .01, "commissionRate": thirdRate, "settleDate": objectInput["settleDate"], "tradeDate": objectInput["tradeDate"], "product": objectInput["product"], "placedThrough": objectInput["vendorName"], "repName": thirdRepFullName, "clientID": objectInput["clientID"], "clientAlternativeID": objectInput["externalAccount"], "clientName": objectInput["clientName"], "commissionType": "Trades", "productType": objectInput["productCategoryName"], "vendor": objectInput["vendorName"], "grid": objectInput["productCategoryName"], "bDPaidDate": objectInput["bDPaidDate"], "businessType": objectInput["businessType"], "fee": 0, };
-    console.log("Return Split Items: ", [firstItem, secondItem, thirdItem]);
     return [firstItem, secondItem, thirdItem];
   }
-
-
-  console.log("Return Split Items: ", [firstItem, secondItem]);
-
-
   return [firstItem, secondItem];
-
 }
 
 
 export async function getAdvisorPayoutGrids(repId: string): Promise<any> {
-  console.log("Query: ", `
-  query MyQuery {
-    searchPayoutGrids(limit: 1000, filter: {advisorID: {eq: "${repId}"}}) {
-      items {
-        rate
-        productCategoryID
-        advisor {
-          firstName
-          lastName
-        }
-      }
-    }
-  }
-          `);
+
   return getQueryResponse(`
   query MyQuery {
     searchPayoutGrids(limit: 1000, filter: {advisorID: {eq: "${repId}"}}) {
