@@ -1,6 +1,6 @@
 /**
  * @file prototype-report-engine/src/ts/index.ts
- * @description This file contains the RMS and Advisory Operations report engine. It interfaces with the 
+ * @description This file contains the RMS and Advisory Operations report engine. It interfaces with the  
  * report state machine to allow the processing of arbitrary amounts of data and a given time span. 
  * First, the report engine queries the proper databases, handles errors in queries, and determines which
  * report steps must be taken. Then, it sends a segment of the data to be stored in S3 in JSON format. 
